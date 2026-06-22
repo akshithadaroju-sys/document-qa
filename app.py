@@ -1,5 +1,5 @@
 import streamlit as st
-import pymupdf4llm
+import fitz
 from retriever import retrieve
 from llm import ask_llm
 
@@ -10,7 +10,7 @@ st.set_page_config(
 )
 
 st.title("📄 Local-First Document Q&A Assistant")
-st.caption("PyMuPDF4LLM + Llama.cpp")
+st.caption("PyMuPDF + Groq Llama 3")
 
 # Session State
 if "chat_history" not in st.session_state:
@@ -19,9 +19,17 @@ if "chat_history" not in st.session_state:
 if "sections" not in st.session_state:
     st.session_state.sections = None
 
+if "document_text" not in st.session_state:
+    st.session_state.document_text = ""
+
 # Sidebar
 with st.sidebar:
     st.header("Controls")
+
+    mode = st.radio(
+        "Choose Mode",
+        ["📄 Document Q&A", "🤖 General AI Chat"]
+    )
 
     if st.button("🗑️ Clear Chat"):
         st.session_state.chat_history = []
@@ -38,17 +46,47 @@ if uploaded_file:
     with open("temp.pdf", "wb") as f:
         f.write(uploaded_file.getbuffer())
 
-    markdown = pymupdf4llm.to_markdown("temp.pdf")
+    # Extract text using PyMuPDF
+    doc = fitz.open("temp.pdf")
 
-    with open("document.md", "w", encoding="utf-8") as f:
-        f.write(markdown)
+    text = ""
 
-    st.session_state.sections = markdown.split("# ")
+    for page in doc:
+        text += page.get_text()
+
+    pages = len(doc)
+    doc.close()
+
+    st.session_state.document_text = text
+    st.session_state.sections = text.split("\n\n")
 
     st.success("✅ PDF Loaded Successfully")
 
+    st.info(f"""
+📄 Pages: {pages}
+📝 Characters: {len(text)}
+📚 Sections: {len(st.session_state.sections)}
+""")
+
+    # Summary Button
+    if st.button("📄 Generate Summary"):
+
+        with st.spinner("Generating Summary..."):
+
+            summary_prompt = f"""
+Summarize the following document in 5-10 bullet points.
+
+Document:
+{text[:10000]}
+"""
+
+            summary = ask_llm(summary_prompt)
+
+            st.subheader("📄 Document Summary")
+            st.write(summary)
+
     with st.expander("📖 Document Preview"):
-        st.write(markdown[:2500])
+        st.write(text[:2500])
 
 # Show Chat History
 for message in st.session_state.chat_history:
@@ -58,12 +96,11 @@ for message in st.session_state.chat_history:
 
 # Chat Input
 question = st.chat_input(
-    "Ask anything about the document..."
+    "Ask anything..."
 )
 
-if question and st.session_state.sections:
+if question:
 
-    # Show User Message
     st.session_state.chat_history.append(
         {
             "role": "user",
@@ -74,19 +111,24 @@ if question and st.session_state.sections:
     with st.chat_message("user"):
         st.markdown(question)
 
-    # Retrieve Context
-    context = retrieve(
-        question,
-        st.session_state.sections
-    )
+    # Document Q&A Mode
+    if mode == "📄 Document Q&A":
 
-    # Include previous chat history
-    conversation = ""
+        if not st.session_state.sections:
+            st.warning("⚠️ Please upload a PDF first.")
+            st.stop()
 
-    for msg in st.session_state.chat_history[-6:]:
-        conversation += f"{msg['role']}: {msg['content']}\n"
+        context = retrieve(
+            question,
+            st.session_state.sections
+        )
 
-    prompt = f"""
+        conversation = ""
+
+        for msg in st.session_state.chat_history[-6:]:
+            conversation += f"{msg['role']}: {msg['content']}\n"
+
+        prompt = f"""
 You are a helpful document assistant.
 
 Conversation:
@@ -101,9 +143,21 @@ Question:
 Answer using only the document context.
 """
 
-    answer = ask_llm(prompt)
+    # General AI Chat Mode
+    else:
 
-    # Save assistant reply
+        context = ""
+
+        prompt = f"""
+You are a helpful AI assistant.
+
+Question:
+{question}
+"""
+
+    with st.spinner("Thinking..."):
+        answer = ask_llm(prompt)
+
     st.session_state.chat_history.append(
         {
             "role": "assistant",
@@ -114,5 +168,23 @@ Answer using only the document context.
     with st.chat_message("assistant"):
         st.markdown(answer)
 
-    with st.expander("🔍 Retrieved Context"):
-        st.write(context)
+    if mode == "📄 Document Q&A":
+        with st.expander("🔍 Retrieved Context"):
+            st.write(context)
+
+# Download Chat
+if st.session_state.chat_history:
+
+    chat_text = "\n".join(
+        [
+            f"{msg['role']}: {msg['content']}"
+            for msg in st.session_state.chat_history
+        ]
+    )
+
+    st.download_button(
+        label="⬇ Download Chat",
+        data=chat_text,
+        file_name="chat_history.txt",
+        mime="text/plain"
+    )
