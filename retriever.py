@@ -1,20 +1,22 @@
-def retrieve(question, sections):
+import re
 
-    best_section = ""
-    best_score = 0
 
-    q_words = set(question.lower().split())
+class Retriever:
+    def clean(self, text):
+        return re.findall(r"\w+", text.lower())
 
-    for sec in sections:
+    def retrieve(self, question, sections):
+        best_section = ""
+        best_score = 0
 
-        score = len(
-            q_words.intersection(
-                set(sec.lower().split())
-            )
-        )
+        q_words = set(self.clean(question))
 
-        if score > best_score:
-            best_score = score
-            best_section = sec
+        for sec in sections:
+            sec_words = set(self.clean(sec))
+            score = len(q_words.intersection(sec_words))
 
-    return best_section
+            if score > best_score:
+                best_score = score
+                best_section = sec
+
+        return best_section
